@@ -1,42 +1,13 @@
-version: "3.8"
-
+version: '3.8'
 services:
-  master:
-    build: ./master
-    container_name: gridmr-master
+  worker:
+    build:
+      context: ./worker
     ports:
-      - "8080:8080"
-    networks:
-      - gridnet
-
-  worker1:
-    build: ./worker
-    container_name: gridmr-worker1
-    environment:
-      - MASTER_URL=http://master:8080
-      - WORKER_ID=worker-1
-      - WORKER_PORT=9001
-      - WORKER_CAPACITY=1
-      - HEARTBEAT_INTERVAL=5
+      - "8001:8001"
+  
+  master:
+    build:
+      context: ./master
     depends_on:
-      - master
-    networks:
-      - gridnet
-
-  worker2:
-    build: ./worker
-    container_name: gridmr-worker2
-    environment:
-      - MASTER_URL=http://master:8080
-      - WORKER_ID=worker-2
-      - WORKER_PORT=9002
-      - WORKER_CAPACITY=1
-      - HEARTBEAT_INTERVAL=5
-    depends_on:
-      - master
-    networks:
-      - gridnet
-
-networks:
-  gridnet:
-    driver: bridge
+      - worker

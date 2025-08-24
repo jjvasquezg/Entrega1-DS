@@ -1,6 +1,5 @@
-FROM python:3.11-slim
+FROM python:3.10-slim
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 COPY worker.py .
-CMD ["python", "worker.py"]
+RUN pip install fastapi uvicorn pydantic
+CMD ["uvicorn", "worker:app", "--host", "0.0.0.0", "--port", "8001"]
