@@ -1,0 +1,37 @@
+syntax = "proto3";
+package gridmr;
+
+service Worker {
+  rpc Heartbeat (HeartbeatReq) returns (HeartbeatResp);
+  rpc ExecuteMap (MapTask) returns (MapResult);
+  rpc ExecuteReduce (ReduceTask) returns (ReduceResult);
+}
+
+message HeartbeatReq { string worker_id = 1; }
+message HeartbeatResp { bool ok = 1; string message = 2; }
+
+message MapTask {
+  string job_id = 1;
+  string script_path = 2;   // /data/shared/jobs/<id>/script.py
+  string input_chunk = 3;   // /data/shared/jobs/<id>/chunks/chunk-0001
+  string shuffle_dir = 4;   // /data/shared/tmp/<id>/map/<partition>/
+}
+
+message MapResult {
+  string job_id = 1;
+  string worker_id = 2;
+  string output_index = 3;  // ruta de índice de intermedios
+}
+
+message ReduceTask {
+  string job_id = 1;
+  string script_path = 2;
+  repeated string shuffle_inputs = 3; // rutas a intermedios por partición
+  string output_path = 4;             // /data/shared/out/<id>/part-0000
+}
+
+message ReduceResult {
+  string job_id = 1;
+  string worker_id = 2;
+  string output_path = 3;
+}
