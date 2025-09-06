@@ -13,7 +13,7 @@ COPY worker/app /app/worker/app
 
 # Dependencias
 RUN pip install --upgrade pip && \
-    pip install grpcio grpcio-tools protobuf pydantic httpx
+    pip install grpcio grpcio-tools protobuf pydantic pydantic_settings httpx
 
 # Generar stubs gRPC para el worker
 RUN python -m grpc_tools.protoc -I./proto \
