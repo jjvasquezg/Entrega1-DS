@@ -4,12 +4,9 @@ import grpc
 from concurrent import futures
 from .settings import settings
 
-# Stubs generados en la imagen por el Dockerfile del master, copiamos aquí también:
-# from master.app import mapreduce_pb2 as pb2
-# from master.app import mapreduce_pb2_grpc as pb2_grpc
+from worker.app.settings import settings
 from worker.app import mapreduce_pb2 as pb2
 from worker.app import mapreduce_pb2_grpc as pb2_grpc
-
 
 class WorkerService(pb2_grpc.WorkerServicer):
     def Heartbeat(self, request, context):

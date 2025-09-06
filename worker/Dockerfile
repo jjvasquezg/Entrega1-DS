@@ -21,7 +21,9 @@ RUN python -m grpc_tools.protoc -I./proto \
     --grpc_python_out=./worker/app \
     proto/mapreduce.proto
 
+ENV PYTHONPATH=/app
+
 EXPOSE 50051
 VOLUME ["/data/shared"]
 
-CMD ["python", "worker/app/server.py"]
+CMD ["python", "-m" , "worker.app.server"]
