@@ -13,7 +13,7 @@ COPY master/app /app/master/app
 COPY common /app/common
 
 RUN pip install --upgrade pip && \
-    pip install fastapi uvicorn[standard] pydantic grpcio grpcio-tools protobuf httpx
+    pip install fastapi uvicorn[standard] pydantic pydantic_settings grpcio grpcio-tools protobuf httpx
 
 # Generar stubs gRPC
 RUN python -m grpc_tools.protoc -I./proto \
