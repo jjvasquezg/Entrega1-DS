@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 import grpc
 import importlib.util
 from typing import Tuple, List, Dict
@@ -8,6 +9,14 @@ from concurrent import futures
 from worker.app.settings import settings
 from worker.app import mapreduce_pb2 as pb2
 from worker.app import mapreduce_pb2_grpc as pb2_grpc
+
+# --- logging básico a stdout ---
+LOG_LEVEL = os.getenv("WORKER_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(threadName)s] %(message)s"
+)
+log = logging.getLogger("gridmr-worker")
 
 def load_user_module(script_path: str):
     spec = importlib.util.spec_from_file_location("user_script", script_path)
@@ -121,12 +130,14 @@ class WorkerService(pb2_grpc.WorkerServicer):
     def Heartbeat(self, request, context):
         return pb2.HeartbeatResp(ok=True, message=f"{settings.WORKER_ID} alive")
 
-    # SINGLE
     def ExecuteJob(self, request, context):
-        print(f"[WORKER {settings.WORKER_ID}] ExecuteJob start job={request.job_id}")
-        print(f"[WORKER {settings.WORKER_ID}] script={request.script_path} input={request.input_path} outdir={request.output_dir}")
+        log.info(f"[{settings.WORKER_ID}] ExecuteJob start job=%s", request.job_id)
+        log.info(" script=%s input=%s outdir=%s", request.script_path, request.input_path, request.output_dir)
         ok, out_path, log_or_err = run_job_single(request.script_path, request.input_path, request.output_dir)
-        print(f"[WORKER {settings.WORKER_ID}] ExecuteJob end ok={ok} out={out_path} err={'' if ok else log_or_err}")
+        if ok:
+            log.info(f"[{settings.WORKER_ID}] ExecuteJob end ok=True out=%s", out_path)
+        else:
+            log.error(f"[{settings.WORKER_ID}] ExecuteJob end ok=False err=%s", log_or_err)
         return pb2.JobResult(
             job_id=request.job_id,
             worker_id=settings.WORKER_ID,
@@ -136,13 +147,16 @@ class WorkerService(pb2_grpc.WorkerServicer):
             error=("" if ok else log_or_err),
         )
 
-    # MAP
     def ExecuteMap(self, request, context):
-        print(f"[WORKER {settings.WORKER_ID}] ExecuteMap start job={request.job_id}")
+        log.info(f"[{settings.WORKER_ID}] ExecuteMap start job=%s chunk=%s parts=%s", request.job_id, request.chunk_id, request.reduce_partitions)
         ok, files, log_or_err = run_map(
             request.script_path, request.input_chunk, request.shuffle_dir,
             request.reduce_partitions, request.chunk_id
         )
+        if ok:
+            log.info(f"[{settings.WORKER_ID}] ExecuteMap end ok=True files=%s", files)
+        else:
+            log.error(f"[{settings.WORKER_ID}] ExecuteMap end ok=False err=%s", log_or_err)
         return pb2.MapResult(
             job_id=request.job_id,
             worker_id=settings.WORKER_ID,
@@ -152,13 +166,16 @@ class WorkerService(pb2_grpc.WorkerServicer):
             error=("" if ok else log_or_err),
         )
 
-    # REDUCE
     def ExecuteReduce(self, request, context):
-        print(f"[WORKER {settings.WORKER_ID}] ExecuteReduce start job={request.job_id}")
+        log.info(f"[{settings.WORKER_ID}] ExecuteReduce start job=%s part=%s inputs=%d", request.job_id, request.partition_id, len(request.shuffle_inputs))
         ok, log_or_err = run_reduce(
             request.script_path, request.partition_id,
             list(request.shuffle_inputs), request.output_path
         )
+        if ok:
+            log.info(f"[{settings.WORKER_ID}] ExecuteReduce end ok=True out=%s", request.output_path)
+        else:
+            log.error(f"[{settings.WORKER_ID}] ExecuteReduce end ok=False err=%s", log_or_err)
         return pb2.ReduceResult(
             job_id=request.job_id,
             worker_id=settings.WORKER_ID,
@@ -167,6 +184,7 @@ class WorkerService(pb2_grpc.WorkerServicer):
             success=ok,
             error=("" if ok else log_or_err),
         )
+
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
