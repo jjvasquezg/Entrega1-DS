@@ -169,15 +169,20 @@ def serve():
     server.add_insecure_port(f"{settings.GRPC_HOST}:{settings.GRPC_PORT}")
 
     # Autoregistro (best-effort)
+    # Autoregistro (best-effort)
     try:
-        import httpx
+        import httpx, os
         if settings.MASTER_HTTP:
+            host_to_advertise = settings.ADVERTISE_HOST or os.getenv("HOST_IP", "") or settings.GRPC_HOST
             with httpx.Client(timeout=5) as client:
-                client.post(f"{settings.MASTER_HTTP}/workers/register",
-                            params={"worker_id": settings.WORKER_ID,
-                                    "address": f"{settings.GRPC_HOST}:{settings.GRPC_PORT}"})
+                client.post(
+                    f"{settings.MASTER_HTTP}/workers/register",
+                    params={"worker_id": settings.WORKER_ID,
+                            "address": f"{host_to_advertise}:{settings.GRPC_PORT}"}
+                )
     except Exception:
         pass
+
 
     server.start()
     print(f"Worker {settings.WORKER_ID} listening on {settings.GRPC_HOST}:{settings.GRPC_PORT}, shared={settings.SHARED_DIR}")
