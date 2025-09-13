@@ -123,7 +123,10 @@ class WorkerService(pb2_grpc.WorkerServicer):
 
     # SINGLE
     def ExecuteJob(self, request, context):
+        print(f"[WORKER {settings.WORKER_ID}] ExecuteJob start job={request.job_id}")
+        print(f"[WORKER {settings.WORKER_ID}] script={request.script_path} input={request.input_path} outdir={request.output_dir}")
         ok, out_path, log_or_err = run_job_single(request.script_path, request.input_path, request.output_dir)
+        print(f"[WORKER {settings.WORKER_ID}] ExecuteJob end ok={ok} out={out_path} err={'' if ok else log_or_err}")
         return pb2.JobResult(
             job_id=request.job_id,
             worker_id=settings.WORKER_ID,
@@ -135,6 +138,7 @@ class WorkerService(pb2_grpc.WorkerServicer):
 
     # MAP
     def ExecuteMap(self, request, context):
+        print(f"[WORKER {settings.WORKER_ID}] ExecuteMap start job={request.job_id}")
         ok, files, log_or_err = run_map(
             request.script_path, request.input_chunk, request.shuffle_dir,
             request.reduce_partitions, request.chunk_id
@@ -150,6 +154,7 @@ class WorkerService(pb2_grpc.WorkerServicer):
 
     # REDUCE
     def ExecuteReduce(self, request, context):
+        print(f"[WORKER {settings.WORKER_ID}] ExecuteReduce start job={request.job_id}")
         ok, log_or_err = run_reduce(
             request.script_path, request.partition_id,
             list(request.shuffle_inputs), request.output_path
@@ -169,7 +174,6 @@ def serve():
     server.add_insecure_port(f"{settings.GRPC_HOST}:{settings.GRPC_PORT}")
 
     # Autoregistro (best-effort)
-    # Autoregistro (best-effort)
     try:
         import httpx, os
         if settings.MASTER_HTTP:
@@ -185,7 +189,7 @@ def serve():
 
 
     server.start()
-    print(f"Worker {settings.WORKER_ID} listening on {settings.GRPC_HOST}:{settings.GRPC_PORT}, shared={settings.SHARED_DIR}")
+    print(f"Worker {settings.WORKER_ID} listening on {settings.ADVERTISE_HOST}:{settings.GRPC_PORT}, shared={settings.SHARED_DIR}")
     try:
         while True:
             time.sleep(60)
