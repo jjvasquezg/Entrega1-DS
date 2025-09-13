@@ -4,16 +4,16 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# Dependencias básicas
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc python3-dev && rm -rf /var/lib/apt/lists/*
 
 COPY proto/ /app/proto/
 COPY master/app /app/master/app
-COPY common /app/common
 
 RUN pip install --upgrade pip && \
-    pip install fastapi uvicorn[standard] pydantic pydantic_settings grpcio grpcio-tools protobuf httpx
+    pip install fastapi uvicorn[standard] \
+               grpcio grpcio-tools protobuf httpx \
+               pydantic pydantic-settings
 
 # Generar stubs gRPC
 RUN python -m grpc_tools.protoc -I./proto \
@@ -24,4 +24,4 @@ RUN python -m grpc_tools.protoc -I./proto \
 EXPOSE 8080
 VOLUME ["/data/shared"]
 
-CMD ["uvicorn", "master.app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "master.app.main:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"]

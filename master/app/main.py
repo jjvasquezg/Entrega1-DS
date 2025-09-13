@@ -6,6 +6,26 @@ from .settings import settings
 
 app = FastAPI(title="GridMR Master")
 
+from collections import deque
+import threading
+import time
+import grpc
+from .storage import job_paths, ensure_dir, download_to_file  # quitamos partition_input
+
+class JobState(str, Enum):
+    QUEUED = "QUEUED"
+    PREPARING = "PREPARING"
+    PREPARED = "PREPARED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+JOB_QUEUE = deque()              # job_id list
+WORKER_RING = deque()            # addresses en orden RR
+WORKER_INFO: Dict[str, dict] = {}  # worker_id -> {address, last_seen}
+LOCK = threading.Lock()
+
+
 class JobRequest(BaseModel):
     script_url: str  # p.ej. http(s)://, file:// o nfs:// (en MVP usaremos http/file)
     input_url: str
@@ -32,6 +52,10 @@ def submit_job(req: JobRequest):
     status = JobStatus(job_id=job_id, status="QUEUED")
     JOBS[job_id] = status
     return status
+
+@app.get("/jobs", response_model=List[JobStatus])
+def list_jobs():
+    return list(JOBS.values())
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 def get_job(job_id: str):
