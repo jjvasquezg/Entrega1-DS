@@ -2,18 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app:/app/worker/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc python3-dev && rm -rf /var/lib/apt/lists/*
 
-# Copiamos proto y código del worker
 COPY proto/ /app/proto/
 COPY worker/app /app/worker/app
 
-# Dependencias
 RUN pip install --upgrade pip && \
-    pip install grpcio grpcio-tools protobuf pydantic pydantic_settings httpx
+    pip install grpcio grpcio-tools protobuf httpx \
+                pydantic pydantic-settings
 
 # Generar stubs gRPC para el worker
 RUN python -m grpc_tools.protoc -I./proto \
@@ -21,9 +21,7 @@ RUN python -m grpc_tools.protoc -I./proto \
     --grpc_python_out=./worker/app \
     proto/mapreduce.proto
 
-ENV PYTHONPATH=/app:/app/worker/app
-
 EXPOSE 50051
 VOLUME ["/data/shared"]
 
-CMD ["python", "-m" , "worker.app.server"]
+CMD ["python", "-m", "worker.app.server"]
