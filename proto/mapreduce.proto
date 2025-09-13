@@ -3,6 +3,11 @@ package gridmr;
 
 service Worker {
   rpc Heartbeat (HeartbeatReq) returns (HeartbeatResp);
+
+  // Modo sin particiones (single-worker)
+  rpc ExecuteJob (JobTask) returns (JobResult);
+
+  // Modo con particiones (multi-worker)
   rpc ExecuteMap (MapTask) returns (MapResult);
   rpc ExecuteReduce (ReduceTask) returns (ReduceResult);
 }
@@ -10,28 +15,54 @@ service Worker {
 message HeartbeatReq { string worker_id = 1; }
 message HeartbeatResp { bool ok = 1; string message = 2; }
 
-message MapTask {
+// -------- SINGLE --------
+message JobTask {
   string job_id = 1;
-  string script_path = 2;   // /data/shared/jobs/<id>/script.py
-  string input_chunk = 3;   // /data/shared/jobs/<id>/chunks/chunk-0001
-  string shuffle_dir = 4;   // /data/shared/tmp/<id>/map/<partition>/
+  string script_path = 2; // /data/shared/jobs/<id>/script.py
+  string input_path = 3;  // /data/shared/jobs/<id>/input/input.data
+  string output_dir = 4;  // /data/shared/jobs/<id>/out/
+}
+message JobResult {
+  string job_id = 1;
+  string worker_id = 2;
+  string output_path = 3; // /data/shared/jobs/<id>/out/result.txt
+  string log = 4;
+  bool success = 5;
+  string error = 6;
 }
 
+// -------- DISTRIBUTED: MAP --------
+message MapTask {
+  string job_id = 1;
+  string script_path = 2;
+  string input_chunk = 3;     // /data/shared/jobs/<id>/chunks/chunk-0000
+  string shuffle_dir = 4;     // /data/shared/jobs/<id>/shuffle/ (worker escribe N archivos por partición)
+  int32 reduce_partitions = 5; // N particiones para reduce
+  string chunk_id = 6;         // "0000" para identificar el chunk
+}
 message MapResult {
   string job_id = 1;
   string worker_id = 2;
-  string output_index = 3;  // ruta de índice de intermedios
+  string chunk_id = 3;
+  repeated string partition_files = 4; // rutas de archivos intermedios generados (uno por partición)
+  bool success = 5;
+  string error = 6;
 }
 
+// -------- DISTRIBUTED: REDUCE --------
 message ReduceTask {
   string job_id = 1;
   string script_path = 2;
-  repeated string shuffle_inputs = 3; // rutas a intermedios por partición
-  string output_path = 4;             // /data/shared/out/<id>/part-0000
+  int32 partition_id = 3;              // partición a reducir
+  repeated string shuffle_inputs = 4;  // archivos de esa partición (de todos los maps)
+  string output_path = 5;              // /data/shared/jobs/<id>/out/part-0000
 }
-
 message ReduceResult {
   string job_id = 1;
   string worker_id = 2;
-  string output_path = 3;
+  int32 partition_id = 3;
+  string output_path = 4;             // part-0000
+  bool success = 5;
+  string error = 6;
 }
+
