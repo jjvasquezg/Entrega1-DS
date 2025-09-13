@@ -24,9 +24,6 @@ from master.app import mapreduce_pb2_grpc as pb2_grpc
 
 app = FastAPI(title="GridMR Master")
 
-jobid = 10000
-i = 1
-
 # --- Logging a stdout ---
 LOG_LEVEL = os.getenv("MASTER_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -96,8 +93,7 @@ def health():
 
 @app.post("/jobs", response_model=JobStatus)
 def submit_job(req: JobRequest, background_tasks: BackgroundTasks):
-    job_id = "job_"+str(jobid+i)
-    i+=1
+    job_id = f"job-{len(JOBS)+1}"
     log.info("job submitted id=%s script=%s input=%s partitions=%s",
              job_id, req.script_url, req.input_url, req.partitions)
     st = JobStatus(job_id=job_id, status=JobState.QUEUED)
