@@ -539,7 +539,7 @@ def scheduler_loop():
                 else:
                     log.warning("no workers available; requeue SINGLE id=%s", job_id)
                     with LOCK: JOB_QUEUE_SINGLE.appendleft(job_id)
-                    now.sleep(0.5)
+                    sleep(0.5)
                 continue
 
             # MAP
@@ -556,7 +556,7 @@ def scheduler_loop():
                 else:
                     log.warning("no workers available; requeue MAP id=%s chunk=%s", job_id, chunk_id)
                     with LOCK: MAP_QUEUE.appendleft(task)
-                    now.sleep(0.5)
+                    sleep(0.5)
                 continue
 
             # REDUCE
@@ -573,7 +573,7 @@ def scheduler_loop():
                 else:
                     log.warning("no workers available; requeue REDUCE id=%s part=%s", job_id, pid)
                     with LOCK: REDUCE_QUEUE.appendleft(rtask)
-                    now.sleep(0.5)
+                    sleep(0.5)
                 continue
 
             # Pulso cada 10s con tamaños de cola (debug)
@@ -584,10 +584,10 @@ def scheduler_loop():
                               len(JOB_QUEUE_SINGLE), len(MAP_QUEUE), len(REDUCE_QUEUE), len(WORKER_RING))
                 last_tick = now()
 
-            now.sleep(0.2)
+            sleep(0.2)
         except Exception as e:
             log.exception("scheduler loop error: %s", e)
-            now.sleep(0.5)
+            sleep(0.5)
 
 
 @app.on_event("startup")
