@@ -1,15 +1,15 @@
-# info de la materia: ST0263 Sistemas Distribuidos
-#
+# Info de la materia: ST0263 Sistemas Distribuidos
+
 # Estudiante(s): 
-# Santiago Alvarez Peña, salvarezp4@eafit.edu.co  
-# Juan José Vasquez Gomez, jjvasquezg@eafit.edu.co  
-# Sebastián Giraldo Alvarez, sgiraldoa7@eafit.edu.co
-#
-# Profesor: Edwin Nelson Montoya Munera, emontoya@eafit.edu.co
-#
+ Santiago Alvarez Peña, salvarezp4@eafit.edu.co  
+ Juan José Vasquez Gomez, jjvasquezg@eafit.edu.co  
+ Sebastián Giraldo Alvarez, sgiraldoa7@eafit.edu.co
+
+## Profesor: Edwin Nelson Montoya Munera, emontoya@eafit.edu.co
+
 # Proyecto 1 GridMR
 
-## 1. breve descripción de la actividad
+## 1. Breve descripción de la actividad
 
 **GridMR** es un sistema de procesamiento distribuido basado en el paradigma **MapReduce** que opera sobre un **grid** de nodos (EC2) dockerizados. El **cliente** envía trabajos (script + datos) al **master** vía **REST**; el master prepara los insumos en un NFS compartido y planifica la ejecución: llama a los **workers** vía **gRPC** para ejecutar **Map** y **Reduce**. Los resultados se guardan en el NFS y se exponen por API.
 
