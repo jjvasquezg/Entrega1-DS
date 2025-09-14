@@ -68,7 +68,6 @@ class JobTimeline:
 # Repositorios en memoria
 JOB_TIMELINES: Dict[str, JobTimeline] = {}
 TASK_METRICS: list[TaskMetric] = []
-PER_WORKER: Dict[str, dict] = {}
 
 class JobRequest(BaseModel):
     script_url: str
@@ -317,10 +316,16 @@ def _take_worker_rr() -> Optional[str]:
 
 def _dispatch_single(job_id: str, worker_addr: str):
     st = JOBS[job_id]
+    tl = JOB_TIMELINES.get(job_id)
     paths = job_paths(settings.SHARED_DIR, job_id)
     st.status = JobState.RUNNING
     log.info("SINGLE start id=%s worker=%s", job_id, worker_addr)
     log.debug("paths script=%s input=%s out=%s", paths["script"], paths["input_file"], paths["out"])
+
+    if tl:
+        tl.mode = tl.mode or "SINGLE"
+        tl.t_single_start = tl.t_single_start or now()
+        tl.status = "RUNNING"
 
     channel_opts = [
         ('grpc.keepalive_time_ms', 20000),
@@ -330,6 +335,10 @@ def _dispatch_single(job_id: str, worker_addr: str):
         ('grpc.max_send_message_length', 50 * 1024 * 1024),
         ('grpc.max_receive_message_length', 50 * 1024 * 1024),
     ]
+
+    tsk = TaskMetric(job_id=job_id, kind="SINGLE", worker=worker_addr,
+                     chunk_id=None, partition_id=None, t_start=now())
+    TASK_METRICS.append(tsk)
 
     try:
         with grpc.insecure_channel(worker_addr, options=channel_opts) as channel:
@@ -349,6 +358,7 @@ def _dispatch_single(job_id: str, worker_addr: str):
             resp: pb2.JobResult = stub.ExecuteJob(req, timeout=settings.GRPC_TIMEOUT_S)
 
         log.info("SINGLE end id=%s ok=%s out=%s err=%s", job_id, resp.success, resp.output_path, resp.error)
+        tsk.t_end = now()
         if resp.success:
             st.status = JobState.SUCCEEDED
             st.outputs = [resp.output_path]
@@ -358,13 +368,26 @@ def _dispatch_single(job_id: str, worker_addr: str):
             st.message = resp.error or "worker failed"
 
     except grpc.RpcError as e:
+        tsk.t_end = now(); tsk.success = False; tsk.error = f"grpc {e.code().name}: {e.details()}"
         st.status = JobState.FAILED
         st.message = f"grpc {e.code().name}: {e.details()}"
         log.error("SINGLE grpc error id=%s code=%s details=%s", job_id, e.code().name, e.details())
     except Exception as e:
+        tsk.t_end = now(); tsk.success = False; tsk.error = f"dispatch error: {e}"
         st.status = JobState.FAILED
         st.message = f"dispatch error: {e}"
         log.error("SINGLE dispatch error id=%s err=%s", job_id, e)
+    finally:
+        # Marcar fin de SINGLE y tiempo acumulado por worker
+        if tl:
+            tl.t_single_end = tl.t_single_end or (tsk.t_end or now())
+            tl.t_finish = tl.t_finish or tl.t_single_end
+            tl.status = st.status
+            if st.message:
+                tl.message = st.message
+        # Completar flag de éxito
+        if tsk.success is None:
+            tsk.success = (st.status == JobState.SUCCEEDED)
 
 def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str):
 
@@ -398,8 +421,6 @@ def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str)
 
         if not resp.success:
             tsk.t_end = now(); tsk.success = False; tsk.error = resp.error or "map failed"
-            PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
-            PER_WORKER[worker_addr]["maps_fail"] += 1
             st.status = JobState.FAILED
             tl = JOB_TIMELINES.get(job_id)
             if tl:
@@ -414,9 +435,6 @@ def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str)
         log.info("MAP end id=%s chunk=%s files=%d", job_id, chunk_id, len(resp.partition_files))
 
         tsk.t_end = now(); tsk.success = True
-        PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
-        PER_WORKER[worker_addr]["maps_ok"] += 1
-        PER_WORKER[worker_addr]["total_time_s"] += (tsk.t_end - tsk.t_start)
 
         with LOCK:
             PENDING_MAPS[job_id] -= 1
@@ -475,8 +493,6 @@ def _dispatch_reduce(job_id: str, partition_id: int, files: List[str], worker_ad
 
         if not resp.success:
             tsk.t_end = now(); tsk.success = False; tsk.error = resp.error or "reduce failed"
-            PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
-            PER_WORKER[worker_addr]["reduces_fail"] += 1
             st.status = JobState.FAILED
             tl = JOB_TIMELINES.get(job_id)
             if tl:
@@ -489,9 +505,6 @@ def _dispatch_reduce(job_id: str, partition_id: int, files: List[str], worker_ad
 
         log.info("REDUCE end id=%s part=%s out=%s", job_id, partition_id, resp.output_path)
         tsk.t_end = now(); tsk.success = True
-        PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
-        PER_WORKER[worker_addr]["reduces_ok"] += 1
-        PER_WORKER[worker_addr]["total_time_s"] += (tsk.t_end - tsk.t_start)
 
         finished = False
         with LOCK:
