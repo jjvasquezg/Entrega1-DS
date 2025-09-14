@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import grpc
+import hashlib
 import importlib.util
 from typing import Tuple, List, Dict
 from concurrent import futures
@@ -49,44 +50,42 @@ def run_job_single(script_path: str, input_path: str, output_dir: str) -> Tuple[
     except Exception as e:
         return False, "", f"error: {e}"
 
-def run_map(script_path: str, input_chunk: str, shuffle_dir: str, reduce_partitions: int, chunk_id: str) -> Tuple[bool, List[str], str]:
-    """
-    Devuelve (ok, partition_files[N], log|err).
-    Crea archivos: {shuffle_dir}/part-0000/chunk-0000, {shuffle_dir}/part-0001/chunk-0000, ...
-    Cada línea: "key\tvalue\n"
-    """
+def partitioner(key: str, reduce_partitions: int) -> int:
+    """Hash estable basado en la key, para decidir la partición."""
+    # Usamos SHA1 para consistencia, luego módulo
+    h = int(hashlib.sha1(key.encode("utf-8")).hexdigest(), 16)
+    return h % reduce_partitions
+
+def run_map(script_path, input_chunk, shuffle_dir, reduce_partitions, chunk_id):
     try:
-        mod = load_user_module(script_path)
-        if not hasattr(mod, "map_func"):
-            return False, [], "script must define map_func for distributed mode"
+        spec = importlib.util.spec_from_file_location("user_script", script_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        map_func = getattr(module, "map_func", None)
+        if not map_func:
+            return False, [], "map_func not defined"
 
-        # Abrir N archivos (uno por partición)
-        os.makedirs(shuffle_dir, exist_ok=True)
-        part_paths = []
-        writers = []
-        for p in range(reduce_partitions):
-            d = os.path.join(shuffle_dir, f"part-{p:04d}")
-            os.makedirs(d, exist_ok=True)
-            fp = os.path.join(d, f"chunk-{chunk_id}")
-            part_paths.append(fp)
-            writers.append(open(fp, "w", encoding="utf-8"))
+        outputs: Dict[int, str] = {}
+        for pid in range(reduce_partitions):
+            out_dir = os.path.join(shuffle_dir, f"part-{pid:04d}")
+            os.makedirs(out_dir, exist_ok=True)
+            outputs[pid] = os.path.join(out_dir, f"chunk-{chunk_id}")
 
-        with open(input_chunk, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                pairs = mod.map_func(line)  # type: ignore
-                for k, v in pairs:
-                    pid = (hash(str(k)) % reduce_partitions)
-                    writers[pid].write(f"{k}\t{v}\n")
-
-        for w in writers:
-            w.close()
-        return True, part_paths, f"map done {chunk_id}"
-    except Exception as e:
+        writers: Dict[int, any] = {pid: open(path, "w") for pid, path in outputs.items()}
         try:
-            for w in writers: w.close()
-        except Exception:
-            pass
-        return False, [], f"error: {e}"
+            with open(input_chunk) as fin:
+                for line in fin:
+                    for key, value in map_func(line):
+                        pid = partitioner(str(key), reduce_partitions)
+                        writers[pid].write(f"{key}\t{value}\n")
+        finally:
+            for f in writers.values():
+                f.close()
+
+        return True, list(outputs.values()), "ok"
+
+    except Exception as e:
+        return False, [], str(e)
 
 def run_reduce(script_path: str, partition_id: int, inputs: List[str], output_path: str) -> Tuple[bool, str]:
     """
