@@ -576,12 +576,12 @@ def scheduler_loop():
                 continue
 
             # Pulso cada 10s con tamaños de cola (debug)
-            now = now()
-            if now - last_tick > 10:
+            now_ = now()
+            if now_ - last_tick > 10:
                 with LOCK:
                     log.debug("queues single=%d map=%d reduce=%d ring=%d",
                               len(JOB_QUEUE_SINGLE), len(MAP_QUEUE), len(REDUCE_QUEUE), len(WORKER_RING))
-                last_tick = now
+                last_tick = now_
 
             now.sleep(0.2)
         except Exception as e:
