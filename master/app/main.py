@@ -1,5 +1,4 @@
 import os
-import time
 import logging
 import uuid
 import asyncio
@@ -7,6 +6,8 @@ import threading
 from collections import deque, defaultdict
 from enum import Enum
 from typing import Dict, Optional, List
+from dataclasses import dataclass, asdict
+from time import time as now
 
 import grpc
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -33,6 +34,41 @@ logging.basicConfig(
 log = logging.getLogger("gridmr-master")
 
 # ---------- Modelos ----------
+@dataclass
+class TaskMetric:
+    job_id: str
+    kind: str              # "MAP" | "REDUCE"
+    worker: str            # "ip:port"
+    chunk_id: str | None   # para MAP
+    partition_id: int | None # para REDUCE
+    t_start: float
+    t_end: float | None = None
+    success: bool | None = None
+    error: str | None = None
+
+@dataclass
+class JobTimeline:
+    job_id: str
+    t_submit: float
+    t_prepare_start: float | None = None
+    t_prepare_end: float | None = None
+    t_map_start: float | None = None
+    t_map_end: float | None = None
+    t_reduce_start: float | None = None
+    t_reduce_end: float | None = None
+    t_finish: float | None = None
+    status: str = "QUEUED"
+    mode: str | None = None
+    map_splits: int | None = None
+    reduce_partitions: int | None = None
+    input_size_bytes: int | None = None
+    message: str | None = None
+
+# Repositorios en memoria
+JOB_TIMELINES: Dict[str, JobTimeline] = {}
+TASK_METRICS: list[TaskMetric] = []
+PER_WORKER: Dict[str, dict] = {}
+
 class JobRequest(BaseModel):
     script_url: str
     input_url: str
@@ -95,6 +131,7 @@ def submit_job(req: JobRequest, background_tasks: BackgroundTasks):
     job_id = f"job-{len(JOBS)+1}"
     st = JobStatus(job_id=job_id, status=JobState.QUEUED)
     JOBS[job_id] = st
+    JOB_TIMELINES[job_id] = JobTimeline(job_id=job_id, t_submit=now(), status="QUEUED")
     background_tasks.add_task(prepare_job, job_id, req)
     return {
         "job_id": job_id,
@@ -163,7 +200,7 @@ def delete_job(job_id: str):
 @app.post("/workers/register")
 def register_worker(worker_id: str, address: str):
     with LOCK:
-        WORKER_INFO[worker_id] = {"address": address, "last_seen": time.time()}
+        WORKER_INFO[worker_id] = {"address": address, "last_seen": now()}
         if address not in WORKER_RING:
             WORKER_RING.append(address)
     return {"ok": True, "count": len(WORKER_INFO), "ring": list(WORKER_RING)}
@@ -172,8 +209,40 @@ def register_worker(worker_id: str, address: str):
 def list_workers():
     return {"workers": WORKER_INFO, "ring": list(WORKER_RING)}
 
+@app.get("/metrics/jobs")
+def metrics_jobs():
+    out = []
+    for job_id, tl in JOB_TIMELINES.items():
+        def d(a, b):
+            return (a - b) if (a and b) else None
+        total = d(tl.t_finish, tl.t_submit)
+        prepare = d(tl.t_prepare_end, tl.t_prepare_start)
+        map_d = d(tl.t_map_end, tl.t_map_start)
+        reduce_d = d(tl.t_reduce_end, tl.t_reduce_start)
+        overhead = None
+        if total is not None:
+            parts = [x for x in [prepare, map_d, reduce_d] if x is not None]
+            if parts:
+                overhead = max(total - sum(parts), 0.0)
+        out.append({
+            "job_id": job_id,
+            "status": tl.status,
+            "mode": tl.mode,
+            "input_size_bytes": tl.input_size_bytes,
+            "map_splits": tl.map_splits,
+            "reduce_partitions": tl.reduce_partitions,
+            "t_total_s": total,
+            "t_prepare_s": prepare,
+            "t_map_s": map_d,
+            "t_reduce_s": reduce_d,
+            "t_overhead_s": overhead
+        })
+    return {"jobs": out}
+
 # ---------- Preparación ----------
 async def _prepare_async(job_id: str, req: JobRequest):
+    tl = JOB_TIMELINES[job_id]
+    tl.t_prepare_start = now()
     st = JOBS[job_id]
     st.status = JobState.PREPARING
     log.info("job preparing id=%s", job_id)
@@ -189,6 +258,7 @@ async def _prepare_async(job_id: str, req: JobRequest):
     await download_to_file(req.input_url,  paths["input_file"], settings.SHARED_DIR)
 
     size = file_size(paths["input_file"])
+    tl.input_size_bytes = size
     partitions = max(1, req.partitions or settings.DEFAULT_PARTITIONS)
     log.info("prepared files id=%s size=%d partitions=%d", job_id, size, partitions)
 
@@ -200,14 +270,24 @@ async def _prepare_async(job_id: str, req: JobRequest):
             for idx, chunk in enumerate(sorted(chunk_files)):
                 MAP_QUEUE.append((job_id, chunk, f"{idx:04d}"))
             PENDING_MAPS[job_id] = len(chunk_files)
+        tl.mode = "DISTRIBUTED"
+        tl.map_splits = len(chunk_files)
+        tl.reduce_partitions = st.partitions
         st.status = JobState.PREPARED
+        tl.t_prepare_end = now()
+        tl.status = "PREPARED"
         log.info("job queued for MAP id=%s chunks=%d", job_id, len(chunk_files))
     else:
         st.mode = JobMode.SINGLE
         st.partitions = 1
         with LOCK:
             JOB_QUEUE_SINGLE.append(job_id)
+        tl.mode = "SINGLE"
+        tl.map_splits = len(chunk_files)
+        tl.reduce_partitions = st.partitions
         st.status = JobState.PREPARED
+        tl.t_prepare_end = now()
+        tl.status = "PREPARED"
         log.info("job queued SINGLE id=%s", job_id)
 
     st.script_path = paths["script"]
@@ -286,6 +366,16 @@ def _dispatch_single(job_id: str, worker_addr: str):
         log.error("SINGLE dispatch error id=%s err=%s", job_id, e)
 
 def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str):
+
+    tl = JOB_TIMELINES[job_id]
+    if tl.t_map_start is None:
+        tl.t_map_start = now()
+        tl.status = "MAPPING"
+    # crear registro de tarea
+    tsk = TaskMetric(job_id=job_id, kind="MAP", worker=worker_addr,
+                     chunk_id=chunk_id, partition_id=None, t_start=now())
+    TASK_METRICS.append(tsk)
+
     st = JOBS[job_id]
     st.status = JobState.MAPPING
     paths = job_paths(settings.SHARED_DIR, job_id)
@@ -306,7 +396,15 @@ def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str)
             resp: pb2.MapResult = stub.ExecuteMap(req, timeout=settings.GRPC_TIMEOUT_S)
 
         if not resp.success:
+            tsk.t_end = now(); tsk.success = False; tsk.error = resp.error or "map failed"
+            PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
+            PER_WORKER[worker_addr]["maps_fail"] += 1
             st.status = JobState.FAILED
+            tl = JOB_TIMELINES.get(job_id)
+            if tl:
+                tl.t_finish = now()
+                tl.status = "FAILED"
+                tl.message = st.message
             st.message = resp.error or f"map failed chunk {chunk_id}"
             log.error("MAP fail id=%s chunk=%s err=%s", job_id, chunk_id, st.message)
             return False
@@ -314,9 +412,15 @@ def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str)
         MAP_RESULTS[job_id][resp.chunk_id] = list(resp.partition_files)
         log.info("MAP end id=%s chunk=%s files=%d", job_id, chunk_id, len(resp.partition_files))
 
+        tsk.t_end = now(); tsk.success = True
+        PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
+        PER_WORKER[worker_addr]["maps_ok"] += 1
+        PER_WORKER[worker_addr]["total_time_s"] += (tsk.t_end - tsk.t_start)
+
         with LOCK:
             PENDING_MAPS[job_id] -= 1
             if PENDING_MAPS[job_id] == 0:
+                tl.t_map_end = now()
                 parts = st.partitions or settings.DEFAULT_PARTITIONS
                 by_partition: Dict[int, List[str]] = {i: [] for i in range(parts)}
                 for _, part_files in MAP_RESULTS[job_id].items():
@@ -330,12 +434,25 @@ def _dispatch_map(job_id: str, chunk_path: str, chunk_id: str, worker_addr: str)
 
     except Exception as e:
         st.status = JobState.FAILED
+        tl = JOB_TIMELINES.get(job_id)
+        if tl:
+            tl.t_finish = now()
+            tl.status = "FAILED"
+            tl.message = st.message
         st.message = f"map dispatch error: {e}"
         log.error("MAP dispatch error id=%s chunk=%s err=%s", job_id, chunk_id, e)
         return False
 
 
 def _dispatch_reduce(job_id: str, partition_id: int, files: List[str], worker_addr: str):
+    tl = JOB_TIMELINES[job_id]
+    if tl.t_reduce_start is None:
+        tl.t_reduce_start = now()
+        tl.status = "REDUCING"
+
+    tsk = TaskMetric(job_id=job_id, kind="REDUCE", worker=worker_addr,
+                     chunk_id=None, partition_id=partition_id, t_start=now())
+    TASK_METRICS.append(tsk)
     st = JOBS[job_id]
     st.status = JobState.REDUCING
     paths = job_paths(settings.SHARED_DIR, job_id)
@@ -356,17 +473,32 @@ def _dispatch_reduce(job_id: str, partition_id: int, files: List[str], worker_ad
             resp: pb2.ReduceResult = stub.ExecuteReduce(req, timeout=settings.GRPC_TIMEOUT_S)
 
         if not resp.success:
+            tsk.t_end = now(); tsk.success = False; tsk.error = resp.error or "reduce failed"
+            PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
+            PER_WORKER[worker_addr]["reduces_fail"] += 1
             st.status = JobState.FAILED
+            tl = JOB_TIMELINES.get(job_id)
+            if tl:
+                tl.t_finish = now()
+                tl.status = "FAILED"
+                tl.message = st.message
             st.message = resp.error or f"reduce failed part {partition_id}"
             log.error("REDUCE fail id=%s part=%s err=%s", job_id, partition_id, st.message)
             return False
 
         log.info("REDUCE end id=%s part=%s out=%s", job_id, partition_id, resp.output_path)
+        tsk.t_end = now(); tsk.success = True
+        PER_WORKER.setdefault(worker_addr, {"maps_ok":0,"maps_fail":0,"reduces_ok":0,"reduces_fail":0,"total_time_s":0.0})
+        PER_WORKER[worker_addr]["reduces_ok"] += 1
+        PER_WORKER[worker_addr]["total_time_s"] += (tsk.t_end - tsk.t_start)
 
         finished = False
         with LOCK:
             PENDING_REDUCES[job_id] -= 1
             if PENDING_REDUCES[job_id] == 0:
+                tl.t_reduce_end = now()
+                tl.t_finish = now()
+                tl.status = "SUCCEEDED"
                 parts = sorted([os.path.join(paths["out"], f) for f in os.listdir(paths["out"]) if f.startswith("part-")])
                 concat_files(parts, paths["result"])
                 st.status = JobState.SUCCEEDED
@@ -378,6 +510,11 @@ def _dispatch_reduce(job_id: str, partition_id: int, files: List[str], worker_ad
 
     except Exception as e:
         st.status = JobState.FAILED
+        tl = JOB_TIMELINES.get(job_id)
+        if tl:
+            tl.t_finish = now()
+            tl.status = "FAILED"
+            tl.message = st.message
         st.message = f"reduce dispatch error: {e}"
         log.error("REDUCE dispatch error id=%s part=%s err=%s", job_id, partition_id, e)
         return False
@@ -401,7 +538,7 @@ def scheduler_loop():
                 else:
                     log.warning("no workers available; requeue SINGLE id=%s", job_id)
                     with LOCK: JOB_QUEUE_SINGLE.appendleft(job_id)
-                    time.sleep(0.5)
+                    now.sleep(0.5)
                 continue
 
             # MAP
@@ -418,7 +555,7 @@ def scheduler_loop():
                 else:
                     log.warning("no workers available; requeue MAP id=%s chunk=%s", job_id, chunk_id)
                     with LOCK: MAP_QUEUE.appendleft(task)
-                    time.sleep(0.5)
+                    now.sleep(0.5)
                 continue
 
             # REDUCE
@@ -435,21 +572,21 @@ def scheduler_loop():
                 else:
                     log.warning("no workers available; requeue REDUCE id=%s part=%s", job_id, pid)
                     with LOCK: REDUCE_QUEUE.appendleft(rtask)
-                    time.sleep(0.5)
+                    now.sleep(0.5)
                 continue
 
             # Pulso cada 10s con tamaños de cola (debug)
-            now = time.time()
+            now = now()
             if now - last_tick > 10:
                 with LOCK:
                     log.debug("queues single=%d map=%d reduce=%d ring=%d",
                               len(JOB_QUEUE_SINGLE), len(MAP_QUEUE), len(REDUCE_QUEUE), len(WORKER_RING))
                 last_tick = now
 
-            time.sleep(0.2)
+            now.sleep(0.2)
         except Exception as e:
             log.exception("scheduler loop error: %s", e)
-            time.sleep(0.5)
+            now.sleep(0.5)
 
 
 @app.on_event("startup")
