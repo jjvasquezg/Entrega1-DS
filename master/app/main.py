@@ -602,14 +602,6 @@ def scheduler_loop():
                     sleep(0.5)
                 continue
 
-            # Pulso cada 10s con tamaños de cola (debug)
-            nowt = now()
-            if nowt - last_tick > 10:
-                with LOCK:
-                    log.debug("queues single=%d map=%d reduce=%d ring=%d",
-                              len(JOB_QUEUE_SINGLE), len(MAP_QUEUE), len(REDUCE_QUEUE), len(WORKER_RING))
-                last_tick = now()
-
             sleep(0.2)
         except Exception as e:
             log.exception("scheduler loop error: %s", e)
