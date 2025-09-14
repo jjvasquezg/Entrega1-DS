@@ -253,7 +253,7 @@ curl -X DELETE "$MASTER_URL/jobs/job-1"
 
 ---
 
-## referencias
+## Referencias
 
 - Enunciado y lineamientos del proyecto GridMR (ST0263 / SI3007), incluyendo objetivos, arquitectura Master–Workers, protocolos y criterios de evaluación.
 - Dean, J., & Ghemawat, S. *MapReduce: Simplified Data Processing on Large Clusters.*
