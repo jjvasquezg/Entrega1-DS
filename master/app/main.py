@@ -65,6 +65,8 @@ class JobTimeline:
     t_map_end: float | None = None
     t_reduce_start: float | None = None
     t_reduce_end: float | None = None
+    t_single_start: float | None = None
+    t_single_end: float | None = None
     t_finish: float | None = None
     status: str = "QUEUED"
     mode: str | None = None
