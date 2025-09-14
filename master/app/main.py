@@ -85,7 +85,6 @@ PENDING_REDUCES: Dict[str, int] = {}
 # ---------- API ----------
 @app.get("/health")
 def health():
-    log.debug("health check")
     return {
         "ok": True, "shared_dir": settings.SHARED_DIR,
         "threshold": settings.FILE_PARTITION_THRESHOLD_BYTES
@@ -94,8 +93,6 @@ def health():
 @app.post("/jobs", response_model=JobStatus)
 def submit_job(req: JobRequest, background_tasks: BackgroundTasks):
     job_id = f"job-{len(JOBS)+1}"
-    log.info("job submitted id=%s script=%s input=%s partitions=%s",
-             job_id, req.script_url, req.input_url, req.partitions)
     st = JobStatus(job_id=job_id, status=JobState.QUEUED)
     JOBS[job_id] = st
     background_tasks.add_task(prepare_job, job_id, req)
@@ -144,7 +141,6 @@ def register_worker(worker_id: str, address: str):
         WORKER_INFO[worker_id] = {"address": address, "last_seen": time.time()}
         if address not in WORKER_RING:
             WORKER_RING.append(address)
-    log.info("worker registered id=%s addr=%s ring=%s", worker_id, address, list(WORKER_RING))
     return {"ok": True, "count": len(WORKER_INFO), "ring": list(WORKER_RING)}
 
 @app.get("/workers")
