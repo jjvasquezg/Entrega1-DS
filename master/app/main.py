@@ -9,6 +9,7 @@ from typing import Dict, Optional, List
 from dataclasses import dataclass, asdict
 from time import time as now
 from time import sleep
+from concurrent.futures import ThreadPoolExecutor
 
 import grpc
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -25,6 +26,13 @@ from master.app import mapreduce_pb2 as pb2
 from master.app import mapreduce_pb2_grpc as pb2_grpc
 
 app = FastAPI(title="GridMR Master")
+
+EXECUTOR = ThreadPoolExecutor(max_workers=32)  # ajustable
+MAX_INFLIGHT_MAPS = int(os.getenv("MAX_INFLIGHT_MAPS", "16"))
+MAX_INFLIGHT_REDUCES = int(os.getenv("MAX_INFLIGHT_REDUCES", "8"))
+
+INFLIGHT_MAPS = 0
+INFLIGHT_REDUCES = 0
 
 # --- Logging a stdout ---
 LOG_LEVEL = os.getenv("MASTER_LOG_LEVEL", "INFO").upper()
