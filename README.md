@@ -1,8 +1,11 @@
-# info de la materia: STxxxx <nombre>
+# info de la materia: ST0263 Sistemas Distribuidos
 #
-# Estudiante(s): nombre, email-eafit
+# Estudiante(s): 
+# Santiago Alvarez Peña, salvarezp4@eafit.edu.co
+# Juan José Vasquez Gomez, jjvasquezg@eafit.edu.co
+# Sebastián Giraldo Alvarez, sgiraldoa7@eafit.edu.co
 #
-# Profesor: nombre, email-eafit
+# Profesor: Edwin Nelson Montoya Munera, email-eafit
 #
 # <para borrar: EL OBJETIVO DE ESTA DOCUMENTACÍON ES QUE CUALQUIER LECTOR CON EL REPO, EN ESPECIAL EL PROFESOR, ENTIENDA EL ALCANCE DE LO DESARROLLADO Y QUE PUEDA REPRODUCIR SIN EL ESTUDIANTE EL AMBIENTE DE DESARROLLO Y EJECUTAR Y USAR LA APLICACIÓN SIN PROBLEMAS>
 
