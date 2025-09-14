@@ -223,29 +223,32 @@ def list_workers():
 def metrics_jobs():
     out = []
     for job_id, tl in JOB_TIMELINES.items():
-        def d(a, b):
-            return (a - b) if (a and b) else None
+        def d(a, b): return (a - b) if (a and b) else None
         total = d(tl.t_finish, tl.t_submit)
+
+        # tiempos por fase
         prepare = d(tl.t_prepare_end, tl.t_prepare_start)
-        map_d = d(tl.t_map_end, tl.t_map_start)
-        reduce_d = d(tl.t_reduce_end, tl.t_reduce_start)
-        overhead = None
-        if total is not None:
-            parts = [x for x in [prepare, map_d, reduce_d] if x is not None]
-            if parts:
-                overhead = max(total - sum(parts), 0.0)
+        map_d   = d(tl.t_map_end,     tl.t_map_start)
+        reduce_d= d(tl.t_reduce_end,  tl.t_reduce_start)
+        single  = d(tl.t_single_end,  tl.t_single_start)
+
+        # overhead = total - suma de fases válidas
+        parts = [x for x in [prepare, map_d, reduce_d, single] if x is not None]
+        overhead = (max(total - sum(parts), 0.0) if (total is not None and parts) else None)
+
         out.append({
             "job_id": job_id,
             "status": tl.status,
-            "mode": tl.mode,
+            "mode": tl.mode,  # "SINGLE" o "DISTRIBUTED"
             "input_size_bytes": tl.input_size_bytes,
             "map_splits": tl.map_splits,
             "reduce_partitions": tl.reduce_partitions,
-            "t_total_secs": total,
-            "t_prepare_secs": prepare,
-            "t_map_secs": map_d,
-            "t_reduce_secs": reduce_d,
-            "t_overhead_secs": overhead
+            "t_total_s": total,
+            "t_prepare_s": prepare,
+            "t_single_s": single, 
+            "t_map_s": map_d,
+            "t_reduce_s": reduce_d,
+            "t_overhead_s": overhead
         })
     return {"jobs": out}
 
