@@ -231,11 +231,11 @@ def metrics_jobs():
             "input_size_bytes": tl.input_size_bytes,
             "map_splits": tl.map_splits,
             "reduce_partitions": tl.reduce_partitions,
-            "t_total_s": total,
-            "t_prepare_s": prepare,
-            "t_map_s": map_d,
-            "t_reduce_s": reduce_d,
-            "t_overhead_s": overhead
+            "t_total_secs": total,
+            "t_prepare_secs": prepare,
+            "t_map_secs": map_d,
+            "t_reduce_secs": reduce_d,
+            "t_overhead_secs": overhead
         })
     return {"jobs": out}
 
