@@ -34,6 +34,7 @@ MAX_INFLIGHT_SINGLES = int(os.getenv("MAX_INFLIGHT_SINGLES", "4"))
 
 INFLIGHT_MAPS = 0
 INFLIGHT_REDUCES = 0
+INFLIGHT_SINGLES = 0
 
 # --- Logging a stdout ---
 LOG_LEVEL = os.getenv("MASTER_LOG_LEVEL", "INFO").upper()
