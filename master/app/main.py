@@ -102,6 +102,27 @@ def submit_job(req: JobRequest, background_tasks: BackgroundTasks):
 def get_job(job_id: str):
     return JOBS.get(job_id, JobStatus(job_id=job_id, status=JobState.UNKNOWN, message="not found"))
 
+@app.get("/jobs/{job_id}/result")
+def get_job_result(job_id: str):
+    st = JOBS.get(job_id)
+    if not st:
+        return {"error": "job not found"}
+    if st.status != JobState.SUCCEEDED:
+        return {"error": f"job not completed (status={st.status})"}
+
+    paths = job_paths(settings.SHARED_DIR, job_id)
+    result_file = paths["result"]
+
+    if not os.path.exists(result_file):
+        return {"error": "result file not found"}
+
+    # Leer y devolver el contenido como texto plano
+    with open(result_file, "r") as f:
+        content = f.read()
+
+    return {"job_id": job_id, "status": st.status, "result": content}
+
+
 @app.get("/jobs/{job_id}/ls")
 def list_job_files(job_id: str):
     st = JOBS.get(job_id)
