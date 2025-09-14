@@ -549,7 +549,6 @@ def _dispatch_reduce(job_id: str, partition_id: int, files: List[str], worker_ad
 
 # ---------- Scheduler principal ----------
 def scheduler_loop():
-    last_tick = 0
     while True:
         try:
             # SINGLE
@@ -602,7 +601,6 @@ def scheduler_loop():
                     sleep(0.5)
                 continue
 
-            sleep(0.2)
         except Exception as e:
             log.exception("scheduler loop error: %s", e)
             sleep(0.5)
