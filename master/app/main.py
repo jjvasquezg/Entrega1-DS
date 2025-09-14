@@ -96,7 +96,11 @@ def submit_job(req: JobRequest, background_tasks: BackgroundTasks):
     st = JobStatus(job_id=job_id, status=JobState.QUEUED)
     JOBS[job_id] = st
     background_tasks.add_task(prepare_job, job_id, req)
-    return st
+    return {
+        "job_id": job_id,
+        "status": st.status,
+        "message": "job submitted successfully"
+    }
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 def get_job(job_id: str):
