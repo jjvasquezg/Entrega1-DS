@@ -245,9 +245,9 @@ curl -X DELETE "$MASTER_URL/jobs/job-1"
 
 - **Concurrencia real**: el scheduler despacha múltiples MAP/REDUCE en paralelo (configurable).
 - **Partitioner estable por key**: evita duplicados en `result.txt`; si aparecen, revisar que todos los workers usen la versión correcta del `run_map`.
-- **SINGLE vs DISTRIBUTED**: hoy puede forzarse `force_distributed=true` para que todo pase por `Map/Reduce`, incluso en archivos pequeños.
+- **SINGLE vs DISTRIBUTED**: Los archivos procesables menores a 5 mb los tomará un solo worker, para evitar tiempo en overheading, cuando sobrepasan el umbral, se procesan de manera distribuida.
 - **Diagnóstico rápido**:
-  - `GET /workers` → ring y direcciones registradas (evitar `0.0.0.0`).
+  - `GET /workers` → ring y direcciones registradas de workers registradas.
   - `docker logs -f gridmr-master` / `gridmr-workerX` → traza completa.
   - Conectividad gRPC desde master: `grpcurl -plaintext <IP_WORKER>:50051 gridmr.Worker.Heartbeat`.
 
