@@ -253,6 +253,180 @@ curl -X DELETE "$MASTER_URL/jobs/job-1"
 
 ---
 
+## 6. Documentación del código (Master & Workers)
+
+Esta sección describe la organización del código, los módulos principales y las funciones clave que implementan GridMR. Incluye el flujo del scheduler, el manejo de almacenamiento (NFS), el contrato gRPC y el ciclo de vida de un job.
+
+### Módulos principales
+
+#### `master/app/main.py` — API REST + Scheduler + Orquestación
+
+Responsable de:
+
+- Exponer API REST (FastAPI) para crear jobs, listar, ver estado, borrar, métricas y listar artefactos.
+- Preparar insumos en NFS y decidir el modo (SINGLE o DISTRIBUTED).
+- Planificar tareas (SINGLE, MAP, REDUCE) en Round Robin sobre los workers registrados.
+- Enviar tareas a workers vía gRPC (stubs generados desde mapreduce.proto).
+- Mantener estado en memoria (jobs, colas, ring de workers, progreso por fases).
+- Métricas de timing por job (prepare, single/map/reduce, total, overhead).
+
+**Estructuras clave**:
+
+- `JOBS`: Dict[job_id, JobStatus]
+- `JOB_TIMELINES`: Dict[job_id, JobTimeline]
+- `WORKER_INFO`: Dict[worker_id, {address, last_seen}]
+- `WORKER_RING`: deque[address]
+
+**Colas**:
+
+- `JOB_QUEUE_SINGLE`, `MAP_QUEUE`, `REDUCE_QUEUE`
+
+**Progreso**:
+
+- `MAP_RESULTS`, `PENDING_MAPS`, `PENDING_REDUCES`
+
+**Concurrencia**:
+
+- `ThreadPoolExecutor`
+- Contadores: `INFLIGHT_*`
+- `LOCK` para sincronización
+
+**Modelos**:
+
+- `JobRequest`, `JobStatus`, `JobTimeline`, `TaskMetric`, `JobMode`, `JobState`
+
+### `scheduler_loop()` — Bucle de planificación concurrente
+
+**Responsabilidad**: Extraer ítems de las colas y despachar tareas a workers en paralelo respetando límites por tipo.
+
+**Pseudoflujo**:
+
+```python
+loop:
+  dispatched = false
+
+  # SINGLE
+  while inflight_singles < MAX_SINGLES and JOB_QUEUE_SINGLE no vacía:
+    job_id = pop_left(JOB_QUEUE_SINGLE)
+    addr   = next_worker_rr()
+    inflight_singles++
+    EXECUTOR.submit(_run_single(job_id, addr))
+    dispatched = true
+
+  # MAP
+  while inflight_maps < MAX_MAPS and MAP_QUEUE no vacía:
+    (job_id, chunk_path, chunk_id) = pop_left(MAP_QUEUE)
+    addr   = next_worker_rr()
+    inflight_maps++
+    EXECUTOR.submit(_run_map(job_id, chunk_path, chunk_id, addr))
+    dispatched = true
+
+  # REDUCE
+  while inflight_reduces < MAX_REDUCES and REDUCE_QUEUE no vacía:
+    (job_id, partition_id, files) = pop_left(REDUCE_QUEUE)
+    addr   = next_worker_rr()
+    inflight_reduces++
+    EXECUTOR.submit(_run_reduce(job_id, partition_id, files, addr))
+    dispatched = true
+
+  if not dispatched: sleep(0.1)
+```
+
+### Flujo de un Job (end-to-end)
+
+1. **POST /jobs**
+2. **prepare_job → _prepare_async**
+3. Decide SINGLE o DISTRIBUTED
+4. Agrega a colas según el modo
+5. **scheduler_loop()** ejecuta los despachos
+6. Reduce → out/result.txt → estado `SUCCEEDED`
+
+### Funciones de despacho (gRPC)
+
+- `_dispatch_single(job_id, worker_addr)`
+- `_dispatch_map(job_id, chunk_path, chunk_id, worker_addr)`
+- `_dispatch_reduce(job_id, partition_id, files, worker_addr)`
+
+### API REST (resumen de endpoints relevantes)
+
+- `POST /jobs`
+- `GET /jobs/{job_id}`
+- `GET /jobs/{job_id}/ls`
+- `GET /jobs/{job_id}/result`
+- `DELETE /jobs/{job_id}`
+- `POST /workers/register`
+- `GET /workers`
+- `GET /metrics/jobs`
+  
+### `master/app/storage.py` — utilidades de almacenamiento (NFS)
+
+- `ensure_dir(path)`
+- `job_paths(shared_dir, job_id)`
+- `download_to_file(url, dst_path, shared_dir)`
+- `file_size(path)`
+- `partition_input_by_lines(...)`
+- `concat_files(files, dest_path)`
+
+### `worker/app/server.py` — servicio gRPC del Worker
+
+Implementa:
+
+- `ExecuteJob(JobTask)` → ejecución completa
+- `ExecuteMap(MapTask)` → procesamiento map con shuffle
+- `ExecuteReduce(ReduceTask)` → reduce final
+
+Notas:
+
+- Partitioner SHA1 garantiza unicidad de claves
+- Exposición de gRPC en IP:PORT del contenedor
+- Acceso a NFS por `/data/shared`
+
+### `proto/mapreduce.proto` — interfaz gRPC
+
+**Mensajes**:
+
+- `JobTask`, `MapTask`, `ReduceTask`
+- `JobResult`, `MapResult`, `ReduceResult`
+
+**Servicio**:
+
+```proto
+service Worker {
+  rpc ExecuteJob(JobTask) returns (JobResult);
+  rpc ExecuteMap(MapTask) returns (MapResult);
+  rpc ExecuteReduce(ReduceTask) returns (ReduceResult);
+}
+```
+
+### Errores y manejo de fallos
+
+- gRPC timeouts → `FAILED`
+- Permisos NFS mal configurados
+- Workers mal registrados (0.0.0.0)
+- Datos no particionables → error en map
+
+### Métricas y monitoreo
+
+- `/metrics/jobs`: tiempos y tamaños
+- Logs detallados en master/worker
+- `_LOG_LEVEL` configurable
+
+### Parámetros clave (ENV)
+
+**Master**:
+
+- `SHARED_DIR`, `FILE_PARTITION_THRESHOLD_BYTES`
+- `EXECUTOR_MAX_WORKERS`, `MAX_INFLIGHT_*`
+- `GRPC_TIMEOUT_S`, `MASTER_LOG_LEVEL`
+
+**Worker**:
+
+- `GRPC_HOST`, `GRPC_PORT`, `ADVERTISE_HOST`
+- `MASTER_HTTP`, `SHARED_DIR`, `WORKER_ID`
+- `WORKER_LOG_LEVEL`
+
+---
+
 ## Referencias
 
 - Enunciado y lineamientos del proyecto GridMR (ST0263 / SI3007), incluyendo objetivos, arquitectura Master–Workers, protocolos y criterios de evaluación.
